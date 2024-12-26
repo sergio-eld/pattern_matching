@@ -56,6 +56,28 @@ struct make_void { typedef void type; };
 template<typename... Ts>
 using void_t = typename make_void<Ts...>::type;
 
+template <typename, typename, typename = void>
+struct _is_invocable : std::false_type {
+    struct _invalid;
+    using return_t = _invalid;
+};
+
+template <typename T, typename ...Args>
+struct _is_invocable<T, std::tuple<Args...>,
+ void_t<decltype(std::declval<T>()(std::declval<Args>()...))>>
+ : std::true_type {
+    using return_t = decltype(std::declval<T>()(std::declval<Args>()...));
+ };
+
+template <typename T, typename ... Args>
+using is_invocable = _is_invocable<T, std::tuple<Args...>>;
+
+template <bool B, typename T = void>
+using enable_if_t = typename std::enable_if<B, T>::type;
+
+template <std::size_t I, typename Tuple>
+using tuple_element_t = typename std::tuple_element<I, Tuple>::type;
+
 template <typename T, template <typename> class...>
 struct _t_foldl;
 
@@ -149,11 +171,15 @@ using callable_arg_t = typename callable_arg<T>::type;
 template <typename>
 using _pred_always_true = std::true_type;
 
-template <typename UnmatchedType, std::size_t I, bool Matched>
-constexpr static std::size_t _find_match(std::integral_constant<bool, Matched>) noexcept {
-    static_assert(((UnmatchedType*)nullptr, Matched), "unmatched Type");
-    return I;
-}
+/*
+found if res < tuple_size
+0 -> [] -> 1, ts == 0, not found
+0 -> [a] -> 0, ts == 1, found
+0 -> [a] -> 1, ts == 1, not found
+*/
+
+template <typename UnmatchedType, std::size_t I>
+constexpr static std::size_t _find_match(std::false_type) noexcept { return I + 1; }
 
 template <typename T, std::size_t I, typename ...>
 constexpr static std::size_t _find_match(std::true_type) noexcept { return I; }
@@ -163,15 +189,24 @@ constexpr static std::size_t _find_match(std::false_type) noexcept {
     return _find_match<T, I + 1, Matches...>(typename Match::template matched<T>{});
 }
 
-template <typename T, typename ... Matches>
+// another strategy is just to return an array of pairs {index, matched} (or a tuple)
+// but it would not shortcircuit
+template <typename T, typename Match, typename ... Matches>
 constexpr static std::size_t find_match() noexcept {
-    return _find_match<T, std::size_t(-1), Matches...>(std::false_type{});
+    return _find_match<T, 0, Matches...>(typename Match::template matched<T>{});
 }
 
+// support empty list of matchers
+template <typename T>
+constexpr static std::size_t find_match() noexcept { return 1; }
+
+// todo: can I simplify this?
+// I could use a simple std::pair, but Pred would need to be type
 template <template <typename> class Pred, typename Callable>
 struct _match {
     template <typename T>
     using matched = std::integral_constant<bool, Pred<T>{}>;
+    using _callable_t = Callable;
     Callable _callable;
 };
 
@@ -193,16 +228,19 @@ constexpr auto _to_match(_match<Pred, Callable> &&m) noexcept
     return std::move(m);
 }
 
+// todo: I am not sure this is correct whith `std::decay_t`
 template <typename Callable,
-    typename = typename std::enable_if<is_non_template_callable<Callable>::value>::type,
-    typename ArgT = callable_arg_t<Callable>>
+    typename = typename std::enable_if<
+        is_non_template_callable<typename std::decay<Callable>::type>::value
+    >::type,
+    typename ArgT = callable_arg_t<std::decay_t<Callable>>>
 constexpr auto _to_match(Callable &&c) noexcept 
 -> decltype(_m_if<is_same, ArgT>(std::forward<Callable>(c))) {
     return _m_if<is_same, ArgT>(std::forward<Callable>(c));
 }
 
 template <typename Callable,
-    typename = typename std::enable_if<!is_non_template_callable<Callable>::value>::type>
+    typename = typename std::enable_if<!is_non_template_callable<std::decay_t<Callable>>::value>::type>
 constexpr void _to_match(Callable &&) noexcept {
     static_assert(((Callable*)nullptr, false), "Callables with multiple or template operator() must be wrapped");
 }
@@ -210,6 +248,8 @@ constexpr void _to_match(Callable &&) noexcept {
 namespace stub {
 namespace {
     struct noop {};
+
+    // allows unqualified call to visit for a particular variant implementation (via ADL)
     template <typename Variant>
     void visit(noop, Variant&&);
 } // namespace
@@ -255,24 +295,49 @@ struct in_place_visitor_t;
 
 template <template <typename> class... Pred, typename... Callable>
 struct in_place_visitor_t<detail::_match<Pred, Callable>...> {
-    // todo: static_assert `m_any` is at the end (if provided)
+    // todo: if I store in 2 separate tuples, I might not need the `_match` wrapper
     std::tuple<detail::_match<Pred, Callable>...> _matches;
 
-    // TODO: decltype(auto) return equivalent for C++11
-    /// invoke the callable from the matches set matched by T
-    template <typename MatchedType>
-    constexpr decltype(auto) operator()(MatchedType &&v) && {
-        return std::get<
-            detail::find_match<typename std::decay<MatchedType>::type, 
-            /*Matches*/detail::_match<Pred, Callable>...>()>(_matches)._callable(std::forward<MatchedType>(v));
+    template <typename T>
+    constexpr static std::size_t _m_indx() noexcept { 
+        return detail::find_match<typename std::decay<T>::type, 
+            /*Matches*/detail::_match<Pred, Callable>...>(); 
+    }
+
+// todo: should I countinute matching in this case?
+//  matched_in_place([](int){}, m_if<std::is_fundamental>([](auto, auto){}))(4, 815);
+//  `4` is int and the first matcher is selected, but will be disabled since it accepts only 1 arg
+//  `is_fundamental` will not be considered, despite `4` satisfying `is_fundamental`
+//  anyway, this logic becomes too complex.
+//  maybe it makes sense to filter the invocable callables first and then select by predicate?
+    template <typename T,
+        std::size_t MatchIndex = _m_indx<T>(),
+        // disable if matcher not found
+        typename = detail::enable_if_t<(MatchIndex < std::tuple_size<decltype(_matches)>::value)>,
+        typename Matcher = detail::tuple_element_t<MatchIndex, decltype(_matches)>,
+        typename ... Args>
+    constexpr auto operator()(T &&v, Args &&... args) && 
+    -> detail::enable_if_t<detail::is_invocable<typename Matcher::_callable_t, T, Args...>{},
+        typename detail::is_invocable<typename Matcher::_callable_t, T, Args...>::return_t> {
+        return std::get<MatchIndex>(_matches)._callable(std::forward<T>(v), std::forward<Args>(args)...);
     }
 };
 
-// TODO: decltype(auto) return equivalent for C++11
+// fixme: _visit -> visit
+// todo: decltype(auto) return equivalent for C++11
 template <typename Variant, typename ... Matches>
-constexpr decltype(auto) operator|(Variant&& v, in_place_visitor_t<Matches...> &&p) {
+constexpr decltype(auto) _visit(in_place_visitor_t<Matches...> &&p, Variant &&v) {
+    // todo: here is the place to implement checks for exhaustive matching
+    // todo: in order to make an unqualified call to `visit`, `in_place_visitor_t` must be wrapped as another type,
+    // but must the `operator()` selection logic must still be observable for checks like `is_invocable` with args
     using detail::stub::visit;
     return visit(std::move(p), std::forward<Variant>(v));
+}
+
+template <typename Variant, typename ... Matches>
+constexpr auto operator|(Variant&& v, in_place_visitor_t<Matches...> &&p) 
+-> decltype(pattern_matching::_visit(std::move(p), std::forward<Variant>(v))) {
+    return pattern_matching::_visit(std::move(p), std::forward<Variant>(v));
 }
 
 struct matched_in_place_t {
@@ -284,3 +349,4 @@ struct matched_in_place_t {
 } const matched_in_place{};
 
 } // namespace pattern_matching
+
