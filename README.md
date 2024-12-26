@@ -1,2 +1,3 @@
-# cpp_pm
-C++ Pattern Matching interface
+# Pattern Matching
+C++ Pattern Matching interface  
+See [example](example.cpp)
