@@ -56,6 +56,9 @@ struct make_void { typedef void type; };
 template<typename... Ts>
 using void_t = typename make_void<Ts...>::type;
 
+template <typename T>
+using decay_t = typename std::decay<T>::type;
+
 template <typename, typename, typename = void>
 struct _is_invocable : std::false_type {
     struct _invalid;
@@ -228,19 +231,17 @@ constexpr auto _to_match(_match<Pred, Callable> &&m) noexcept
     return std::move(m);
 }
 
-// todo: I am not sure this is correct whith `std::decay_t`
+// todo: I am not sure this is correct with `decay_t`
 template <typename Callable,
-    typename = typename std::enable_if<
-        is_non_template_callable<typename std::decay<Callable>::type>::value
-    >::type,
-    typename ArgT = callable_arg_t<std::decay_t<Callable>>>
+    typename = enable_if_t<is_non_template_callable<decay_t<Callable>>::value>,
+    typename ArgT = callable_arg_t<decay_t<Callable>>>
 constexpr auto _to_match(Callable &&c) noexcept 
 -> decltype(_m_if<is_same, ArgT>(std::forward<Callable>(c))) {
     return _m_if<is_same, ArgT>(std::forward<Callable>(c));
 }
 
 template <typename Callable,
-    typename = typename std::enable_if<!is_non_template_callable<std::decay_t<Callable>>::value>::type>
+    typename = enable_if_t<!is_non_template_callable<detail::decay_t<Callable>>::value>>
 constexpr void _to_match(Callable &&) noexcept {
     static_assert(((Callable*)nullptr, false), "Callables with multiple or template operator() must be wrapped");
 }
@@ -304,7 +305,7 @@ struct in_place_visitor_t<detail::_match<Pred, Callable>...> {
             /*Matches*/detail::_match<Pred, Callable>...>(); 
     }
 
-// todo: should I countinute matching in this case?
+// todo: should I countinue matching in this case?
 //  matched_in_place([](int){}, m_if<std::is_fundamental>([](auto, auto){}))(4, 815);
 //  `4` is int and the first matcher is selected, but will be disabled since it accepts only 1 arg
 //  `is_fundamental` will not be considered, despite `4` satisfying `is_fundamental`

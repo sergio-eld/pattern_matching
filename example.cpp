@@ -1,21 +1,24 @@
 #include <eld/pattern_matching.hpp>
 
+#include <mpark/variant.hpp>
+
 #include <iostream>
 #include <vector>
 #include <string>
 
 // todo: modify the example to work with C++11 (or at least 14)
-// todo: use mpark/variant
-#include <variant>
 
 // for exposition of captured state
 struct stateful {
     stateful() { std::cout << "stateful()\n"; }
     stateful(const stateful&) = delete;
-    stateful(stateful&&) = delete;
+    // mandatory copy elision only supported from C++17
+    //stateful(stateful&&) noexcept = delete;
+    stateful(stateful&&) noexcept = default;
     ~stateful() { std::cout << "~stateful()\n"; }
 };
 
+// todo: C++11-friendly example (no auto args, no capture-initializations)
 // the matching is done inside the function, argument type is used to demonstrate the types
 template <template <typename...> class Variant>
 static std::string match_t(const Variant<int, double, std::string, std::vector<int>> &v) {
@@ -51,14 +54,14 @@ int main() {
     const auto match =
         [](const auto& v) {
             // use another std::variant-like template, i.e. mpark::variant
-            return match_t<std::variant>(v);
+            return match_t<mpark::variant>(v);
         };
     
     std::cout 
       << match("oceanic")
       << '\n' << match(815) 
       << '\n' << match(23.42)
-      << '\n' << match(std::vector{4, 8, 15, 16, 23, 42})
+      << '\n' << match(std::vector<int>{4, 8, 15, 16, 23, 42})
       << '\n';
 }
 
