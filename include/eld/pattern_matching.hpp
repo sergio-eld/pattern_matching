@@ -158,13 +158,13 @@ struct is_non_template_callable<C, void_t<decltype(&C::operator())>> : std::true
 template <typename T, typename = decltype(&T::operator())>
 struct callable_arg;
 
-template <typename T, typename Arg, typename Ret>
-struct callable_arg<T, Ret(T::*)(Arg)> {
+template <typename T, typename Arg, typename Ret, typename ... Args>
+struct callable_arg<T, Ret(T::*)(Arg, Args...)> {
     using type = Arg;
 };
 
-template <typename T, typename Arg, typename Ret>
-struct callable_arg<T, Ret(T::*)(Arg) const> {
+template <typename T, typename Arg, typename Ret, typename ... Args>
+struct callable_arg<T, Ret(T::*)(Arg, Args...) const> {
     using type = Arg;
 };
 
@@ -234,7 +234,7 @@ constexpr auto _to_match(_match<Pred, Callable> &&m) noexcept
 // todo: I am not sure this is correct with `decay_t`
 template <typename Callable,
     typename = enable_if_t<is_non_template_callable<decay_t<Callable>>::value>,
-    typename ArgT = callable_arg_t<decay_t<Callable>>>
+    typename ArgT = decay_t<callable_arg_t<decay_t<Callable>>>>
 constexpr auto _to_match(Callable &&c) noexcept 
 -> decltype(_m_if<is_same, ArgT>(std::forward<Callable>(c))) {
     return _m_if<is_same, ArgT>(std::forward<Callable>(c));
