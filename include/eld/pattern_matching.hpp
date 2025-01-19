@@ -220,8 +220,8 @@ struct _bind {
 };
 
 template <template <typename, typename...> class Pred, typename ... Args, typename Callable>
-constexpr auto _m_if(Callable &&c) noexcept 
--> _match<_bind<Pred, Args...>::template pred, Callable&&> {
+constexpr auto _m_if(Callable &&c) noexcept
+-> decltype(_match<_bind<Pred, Args...>::template pred, Callable&&>{std::declval<Callable&&>()}) {
     return _match<_bind<Pred, Args...>::template pred, Callable&&>{std::forward<Callable>(c)};
 }
 
@@ -236,7 +236,7 @@ template <typename Callable,
     typename = enable_if_t<is_non_template_callable<decay_t<Callable>>::value>,
     typename ArgT = decay_t<callable_arg_t<decay_t<Callable>>>>
 constexpr auto _to_match(Callable &&c) noexcept 
--> decltype(_m_if<is_same, ArgT>(std::forward<Callable>(c))) {
+-> decltype(_m_if<is_same, ArgT>(std::declval<Callable&&>())) {
     return _m_if<is_same, ArgT>(std::forward<Callable>(c));
 }
 
@@ -266,7 +266,7 @@ namespace {
 /// match using Callable if `Pred<T, Args...>::value` is `true`
 template <template <typename, typename...> class Pred, typename ... Args, typename Callable>
 constexpr auto m_if(Callable &&c) noexcept 
--> decltype(detail::_m_if<Pred, Args...>(std::forward<Callable>(c))) {
+-> decltype(detail::_m_if<Pred, Args...>(std::declval<Callable&&>())) {
     return detail::_m_if<Pred, Args...>(std::forward<Callable>(c));
 }
 
@@ -274,20 +274,20 @@ constexpr auto m_if(Callable &&c) noexcept
 template <template <typename, typename...> class Templ, typename ... SpecArgs, 
     typename Callable>
 constexpr auto m_is(Callable &&c) noexcept 
--> decltype(detail::_m_if<detail::is_template_bind<Templ, SpecArgs...>::template pred>(std::forward<Callable>(c))) {
+-> decltype(detail::_m_if<detail::is_template_bind<Templ, SpecArgs...>::template pred>(std::declval<Callable&&>())) {
     return detail::_m_if<detail::is_template_bind<Templ, SpecArgs...>::template pred>(std::forward<Callable>(c));
 }
     
 /// match type T using Callable
 template <typename T, typename Callable>
 constexpr auto m_is(Callable &&c) noexcept 
--> decltype(detail::_m_if<detail::is_same_type, T>(std::forward<Callable>(c))) {
+-> decltype(detail::_m_if<detail::is_same_type, T>(std::declval<Callable&&>())) {
     return detail::_m_if<detail::is_same_type, T>(std::forward<Callable>(c));
 }
 
 template <typename Callable>
 constexpr auto m_any(Callable &&c) noexcept 
--> decltype(m_if<detail::_pred_always_true>(std::forward<Callable>(c))) {
+-> decltype(m_if<detail::_pred_always_true>(std::declval<Callable&&>())) {
     return m_if<detail::_pred_always_true>(std::forward<Callable>(c));
 }
 
@@ -318,7 +318,7 @@ struct in_place_visitor_t<detail::_match<Pred, Callable>...> {
         typename Matcher = detail::tuple_element_t<MatchIndex, decltype(_matches)>,
         typename ... Args>
     constexpr auto operator()(T &&v, Args &&... args) && 
-    -> detail::enable_if_t<detail::is_invocable<typename Matcher::_callable_t, T, Args...>{},
+    -> detail::enable_if_t<detail::is_invocable<typename Matcher::_callable_t, T, Args...>::value,
         typename detail::is_invocable<typename Matcher::_callable_t, T, Args...>::return_t> {
         return std::get<MatchIndex>(_matches)._callable(std::forward<T>(v), std::forward<Args>(args)...);
     }
