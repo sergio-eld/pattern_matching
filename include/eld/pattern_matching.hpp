@@ -246,16 +246,6 @@ constexpr void _to_match(Callable &&) noexcept {
     static_assert(((Callable*)nullptr, false), "Callables with multiple or template operator() must be wrapped");
 }
 
-namespace stub {
-namespace {
-    struct noop {};
-
-    // allows unqualified call to visit for a particular variant implementation (via ADL)
-    template <typename Variant>
-    void visit(noop, Variant&&);
-} // namespace
-} // namespace stub
-
 } // namespace
 } // namespace detail
 
@@ -324,21 +314,10 @@ struct in_place_visitor_t<detail::_match<Pred, Callable>...> {
     }
 };
 
-// fixme: _visit -> visit
-// todo: decltype(auto) return equivalent for C++11
-template <typename Variant, typename ... Matches>
-constexpr decltype(auto) _visit(in_place_visitor_t<Matches...> &&p, Variant &&v) {
-    // todo: here is the place to implement checks for exhaustive matching
-    // todo: in order to make an unqualified call to `visit`, `in_place_visitor_t` must be wrapped as another type,
-    // but must the `operator()` selection logic must still be observable for checks like `is_invocable` with args
-    using detail::stub::visit;
-    return visit(std::move(p), std::forward<Variant>(v));
-}
-
 template <typename Variant, typename ... Matches>
 constexpr auto operator|(Variant&& v, in_place_visitor_t<Matches...> &&p) 
--> decltype(pattern_matching::_visit(std::move(p), std::forward<Variant>(v))) {
-    return pattern_matching::_visit(std::move(p), std::forward<Variant>(v));
+-> decltype(visit(std::move(p), std::forward<Variant>(v))) {
+    return visit(std::move(p), std::forward<Variant>(v));
 }
 
 struct matched_in_place_t {
